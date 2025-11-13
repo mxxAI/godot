@@ -103,6 +103,8 @@ jobs:
         run: |
           echo "Building Godot ${{ inputs.godot_version }} for Android Editor (${{ inputs.arch }})"
           
+          # IMPORTANT FIX: Removed -j$(nproc) to prevent out-of-memory errors on CI runners.
+          # This defaults to a single-threaded build (-j1), which is slower but more reliable.
           scons platform=android \
                 target=editor \
                 arch=${{ inputs.arch }} \
@@ -113,8 +115,7 @@ jobs:
                 minizip=yes \
                 module_text_server_fb_enabled=yes \
                 ${{ env.SCONSFLAGS }} \
-                LINKFLAGS='-Wl,--no-undefined' \
-                -j$(nproc)
+                LINKFLAGS='-Wl,--no-undefined'
           
           echo "=== Build completed successfully ==="
           ls -lh bin/
@@ -322,4 +323,4 @@ jobs:
             .scons-cache/*.log
             platform/android/java/build/
             platform/android/java/app/build/
-          retention-days: 14
+          retention-days: 14 
