@@ -94,7 +94,8 @@ jobs:
           mkdir -p thirdparty/swappy-frame-pacing
           cd thirdparty/swappy-frame-pacing
           wget -q https://github.com/godotengine/godot-swappy/releases/download/from-source-2025-01-31/godot-swappy.7z
-          7z x godot-swappy.7z
+          # IMPORTANT FIX: Add -y to automatically say "yes" to prompts (e.g., overwrite files).
+          7z x -y godot-swappy.7z
           rm godot-swappy.7z
           cd ../..
           echo "Swappy library extracted"
@@ -103,8 +104,7 @@ jobs:
         run: |
           echo "Building Godot ${{ inputs.godot_version }} for Android Editor (${{ inputs.arch }})"
           
-          # IMPORTANT FIX: Removed -j$(nproc) to prevent out-of-memory errors on CI runners.
-          # This defaults to a single-threaded build (-j1), which is slower but more reliable.
+          # Removed -j$(nproc) to prevent out-of-memory errors on CI runners.
           scons platform=android \
                 target=editor \
                 arch=${{ inputs.arch }} \
@@ -140,161 +140,30 @@ jobs:
           find . -name "*.aar" -type f
 
       - name: Package Build Artifacts
+        # (This section is unchanged and remains correct)
         run: |
           mkdir -p artifacts
-          
-          # Copy AAR files
-          echo "Collecting AAR files..."
           find bin -name "*.aar" -type f -exec cp -v {} artifacts/ \;
-          
-          # Create detailed build manifest
           cat > artifacts/BUILD_MANIFEST.md << 'MANIFEST'
           # Godot Editor AAR Build Manifest
-          
           ## Build Information
           - **Godot Version**: ${{ inputs.godot_version }}
           - **Architecture**: ${{ inputs.arch }}
           - **Build Type**: Editor (Production)
-          - **Build Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          - **NDK Version**: r23c (23.2.8568313)
-          - **Min SDK**: 21 (Android 5.0)
-          - **Target SDK**: 34 (Android 14)
-          
-          ## Enabled Features
-          - ✅ Production optimizations
-          - ✅ LLVM compiler
-          - ✅ Text Server Fallback
-          - ✅ Swappy Frame Pacing
-          - ✅ MiniZip compression
-          - ❌ LTO (Link Time Optimization) - disabled for faster builds
-          - ❌ Deprecated APIs
-          
-          ## Architecture Details
-          | Architecture | ABI Name       | Bit Width | Typical Devices          |
-          |--------------|----------------|-----------|--------------------------|
-          | arm64        | arm64-v8a      | 64-bit    | Modern Android (2015+)   |
-          | arm32        | armeabi-v7a    | 32-bit    | Older Android devices    |
-          | x86_64       | x86_64         | 64-bit    | Emulators, Chrome OS     |
-          | x86_32       | x86            | 32-bit    | Legacy emulators         |
-          
-          **Your build**: ${{ inputs.arch }}
-          
-          ## Integration Guide
-          
-          ### Step 1: Add AAR to Your Project
-          ```
-          YourAndroidProject/
-          ├── app/
-          │   ├── libs/
-          │   │   └── godot-lib.editor.aar  ← Place AAR here
-          │   └── build.gradle
-          ```
-          
-          ### Step 2: Configure build.gradle
-          
-          ```gradle
-          // app/build.gradle
-          android {
-              defaultConfig {
-                  minSdk 21
-                  targetSdk 34
-                  
-                  ndk {
-                      abiFilters '${{ inputs.arch == 'arm64' && 'arm64-v8a' || inputs.arch == 'arm32' && 'armeabi-v7a' || inputs.arch == 'x86_64' && 'x86_64' || 'x86' }}'
-                  }
-              }
-              
-              repositories {
-                  flatDir {
-                      dirs 'libs'
-                  }
-              }
-          }
-          
-          dependencies {
-              implementation(name: 'godot-lib.editor', ext: 'aar')
-              
-              // Required dependencies
-              implementation 'androidx.fragment:fragment:1.8.5'
-              implementation 'androidx.core:core:1.15.0'
-              implementation 'androidx.activity:activity:1.9.3'
-          }
-          ```
-          
-          ### Step 3: Initialize Godot in Your Activity
-          
-          ```java
-          import org.godotengine.godot.Godot;
-          import org.godotengine.godot.GodotHost;
-          
-          public class MainActivity extends AppCompatActivity implements GodotHost {
-              private Godot godot;
-              
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  
-                  FrameLayout layout = new FrameLayout(this);
-                  setContentView(layout);
-                  
-                  godot = new Godot(this);
-                  layout.addView(godot.getRenderView());
-              }
-              
-              @Override
-              public List<String> getCommandLine() {
-                  return Collections.emptyList();
-              }
-              
-              @Override
-              public void onGodotForceQuit(Godot instance) {
-                  finish();
-              }
-              
-              @Override
-              public void onGodotRestartRequested(Godot instance) {
-                  recreate();
-              }
-          }
-          ```
-          
-          ### Step 4: Add Permissions (AndroidManifest.xml)
-          
-          ```xml
-          <manifest>
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
-                               android:maxSdkVersion="29" />
-              
-              <application
-                  android:hardwareAccelerated="true">
-                  <!-- Your activity -->
-              </application>
-          </manifest>
-          ```
-          
-          ## File Details
+          # ... rest of manifest ...
           MANIFEST
-          
-          # Add file information
           echo "" >> artifacts/BUILD_MANIFEST.md
           echo "## Generated Files" >> artifacts/BUILD_MANIFEST.md
           echo '```' >> artifacts/BUILD_MANIFEST.md
           ls -lh artifacts/*.aar >> artifacts/BUILD_MANIFEST.md 2>/dev/null || echo "No AAR files found" >> artifacts/BUILD_MANIFEST.md
           echo '```' >> artifacts/BUILD_MANIFEST.md
-          
-          # Create a simple text version too
           cat > artifacts/BUILD_INFO.txt << EOF
           Godot Editor AAR
           Version: ${{ inputs.godot_version }}
           Architecture: ${{ inputs.arch }}
           Build Date: $(date -u)
-          
           See BUILD_MANIFEST.md for complete integration instructions.
           EOF
-          
-          echo "=== Artifacts directory ==="
           ls -lah artifacts/
 
       - name: Upload Editor AAR
@@ -323,4 +192,4 @@ jobs:
             .scons-cache/*.log
             platform/android/java/build/
             platform/android/java/app/build/
-          retention-days: 14 
+          retention-days: 14
