@@ -1,0 +1,64 @@
+# My personal workflow to build just the Godot Editor AAR
+name: Build My Godot AAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot Git Tag or Branch (e.g., 4.2.1-stable)'
+        required: true
+        default: '4.2.1-stable'
+        type: string
+
+jobs:
+  build-android-editor:
+    runs-on: ubuntu-latest
+    name: Build Editor ${{ inputs.godot_version }} (arm64)
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Godot Repository (at specific version)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.godot_version }}
+          submodules: recursive
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: android-editor
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Compilation (C++ part)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: 'arch=arm64 production=yes'
+          platform: android
+          target: editor
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: android-editor
+        continue-on-error: true
+
+      - name: Generate Godot editor AAR (Java part)
+        run: |
+          cd platform/android/java
+          ./gradlew generateGodotEditor
+          cd ../../..
+
+      - name: Upload Editor AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-editor-aar-${{ inputs.godot_version }}-arm64
+          path: bin/android_editor_builds/*.aar
