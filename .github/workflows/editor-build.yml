@@ -1,142 +1,68 @@
-# .github/workflows/build-godot-editor.yml
-name: Build Godot Android Editor AAR
+# A GitHub Actions workflow to build the Godot Editor AAR
+name: Build Godot Editor AAR
 
+# This allows you to run the workflow manually from the Actions tab
 on:
   workflow_dispatch:
     inputs:
-      godot_version:
-        description: 'Godot version to build'
-        required: true
-        default: '4.2-stable'
-        type: choice
-        options:
-          - '4.2-stable'
-          - '4.1-stable'
-          - '4.0-stable'
-          - '3.5-stable'
-      architectures:
-        description: 'Architectures to build'
+      architecture:
+        description: 'Target Architecture'
         required: true
         default: 'arm64'
         type: choice
         options:
-          - 'arm64'
-          - 'arm64,armv7'
-          - 'arm64,armv7,x86_64'
+        - arm64
+        - arm32
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 180
-    
+    # Use a powerful Ubuntu runner provided by GitHub
+    runs-on: ubuntu-latest
+    name: Build for ${{ inputs.architecture }}
+
     steps:
-    - name: Checkout Godot
+    # Step 1: Check out the source code from your repository
+    - name: Checkout Godot repository
       uses: actions/checkout@v4
-      with:
-        repository: godotengine/godot
-        ref: ${{ github.event.inputs.godot_version }}
-        
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        
-    - name: Install SCons
-      run: |
-        python -m pip install --upgrade pip
-        pip install scons==4.5.2
-        
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libx11-dev libxcursor-dev \
-          libxinerama-dev libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev \
-          libudev-dev libxi-dev libxrandr-dev
-        
-    - name: Set up JDK 17
+
+    # Step 2: Set up Java (required for Android builds)
+    - name: Set up Java Development Kit
       uses: actions/setup-java@v4
       with:
-        distribution: 'temurin'
+        distribution: 'zulu'
         java-version: '17'
-        
-    - name: Set up Android SDK
+
+    # Step 3: Set up Android SDK and NDK
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      
-    - name: Install Android NDK
+
+    # Step 4: Install Godot's build dependencies
+    - name: Install build dependencies
       run: |
-        sdkmanager --install "ndk;23.2.8568313" "cmake;3.22.1" "build-tools;33.0.2"
-        echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/23.2.8568313" >> $GITHUB_ENV
-        
-    - name: Cache build files
-      uses: actions/cache@v4
-      with:
-        path: |
-          .scons_cache
-        key: ${{ runner.os }}-godot-${{ github.event.inputs.godot_version }}-${{ hashFiles('**/*.cpp', '**/*.h') }}
-        restore-keys: |
-          ${{ runner.os }}-godot-${{ github.event.inputs.godot_version }}-
-        
-    - name: Build Godot Editor for Android
+        sudo apt-get update
+        sudo apt-get install -y scons pkg-config libx11-dev libxcursor-dev libxinerama-dev \
+        libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev libudev-dev libxi-dev \
+        libxrandr-dev yasm
+
+    # Step 5: The main build command!
+    # This uses SCons to build the Android editor AAR for the selected architecture.
+    # The -j$(nproc) flag uses all available CPU cores to speed up the build.
+    - name: Build Godot Editor AAR
       run: |
-        # Parse architectures
-        IFS=',' read -ra ARCHS <<< "${{ github.event.inputs.architectures }}"
+        # Set the target architecture based on the workflow input
+        if [ "${{ inputs.architecture }}" == "arm64" ]; then
+          TARGET_ARCH="arm64v8"
+        else
+          TARGET_ARCH="armv7"
+        fi
         
-        # Build for each architecture
-        for arch in "${ARCHS[@]}"; do
-          echo "Building for $arch..."
-          scons platform=android target=editor arch=$arch android_editor=yes \
-            use_static_cpp=yes optimize=speed production=yes \
-            verbose=yes warnings=no progress=yes -j2
-        done
-        
-    - name: Generate AAR
-      run: |
-        cd platform/android/java
-        chmod +x gradlew
-        ./gradlew generateGodotEditor --stacktrace
-        
-    - name: List generated files
-      run: |
-        echo "Generated AAR files:"
-        find platform/android/java -name "*.aar" -type f
-        
-    - name: Prepare artifacts
-      run: |
-        mkdir -p output
-        find platform/android/java -name "*.aar" -type f -exec cp {} output/ \;
-        
-        # Create info file
-        cat > output/BUILD_INFO.txt << EOF
-        Godot Version: ${{ github.event.inputs.godot_version }}
-        Architectures: ${{ github.event.inputs.architectures }}
-        Build Date: $(date -u)
-        Commit: $(git rev-parse HEAD)
-        
-        This is a Godot Editor AAR for Android.
-        File size: $(du -h output/*.aar | cut -f1)
-        
-        Integration instructions:
-        1. Copy the .aar file to your Android project's app/libs/ folder
-        2. Add to build.gradle:
-           dependencies {
-               implementation(name: 'godot-lib.editor', ext: 'aar')
-           }
-        EOF
-        
-    - name: Upload AAR
+        echo "Building for architecture: ${{ inputs.architecture }} (Android arch: $TARGET_ARCH)"
+        scons platform=android target=editor arch=${{ inputs.architecture }} android_arch=$TARGET_ARCH -j$(nproc)
+
+    # Step 6: Upload the final .aar file as a build artifact
+    # This makes the file available for you to download.
+    - name: Upload AAR Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: godot-editor-aar-${{ github.event.inputs.godot_version }}-${{ github.run_number }}
-        path: output/
-        retention-days: 90
-        compression-level: 9
-        
-    - name: Upload build logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs-${{ github.run_number }}
-        path: |
-          .scons_cache/*.log
-          platform/android/java/build/outputs/logs/
-        retention-days: 7
+        name: godot-editor-aar-${{ inputs.architecture }}
+        path: bin/*.aar
