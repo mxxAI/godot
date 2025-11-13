@@ -1,68 +1,85 @@
-# A GitHub Actions workflow to build the Godot Editor AAR
-name: Build Godot Editor AAR
+# A modified version of the official script to build only the Godot Editor AAR
+name: Build Godot Editor AAR (Official Method)
 
-# This allows you to run the workflow manually from the Actions tab
 on:
   workflow_dispatch:
     inputs:
-      architecture:
-        description: 'Target Architecture'
+      godot_version:
+        description: 'Godot Git Tag or Branch (e.g., 4.2.1-stable or master)'
         required: true
-        default: 'arm64'
-        type: choice
-        options:
-        - arm64
-        - arm32
+        default: '4.2.1-stable'
+        type: string
+
+# Global Settings from the official script
+env:
+  SCONS_FLAGS: >-
+    dev_mode=yes
+    module_text_server_fb_enabled=yes
+    tests=no
+    swappy=yes
 
 jobs:
-  build:
-    # Use a powerful Ubuntu runner provided by GitHub
-    runs-on: ubuntu-latest
-    name: Build for ${{ inputs.architecture }}
+  build-android-editor:
+    runs-on: ubuntu-latest # Using latest for compatibility, 24.04 can be used too
+    name: Build Editor ${{ inputs.godot_version }} (arm64)
+    timeout-minutes: 90 # Increased timeout just in case
 
     steps:
-    # Step 1: Check out the source code from your repository
-    - name: Checkout Godot repository
-      uses: actions/checkout@v4
+      - name: Checkout Godot Repository (at specific version)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.godot_version }}
+          submodules: recursive
 
-    # Step 2: Set up Java (required for Android builds)
-    - name: Set up Java Development Kit
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '17'
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    # Step 3: Set up Android SDK and NDK
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: android-editor
+        continue-on-error: true
 
-    # Step 4: Install Godot's build dependencies
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y scons pkg-config libx11-dev libxcursor-dev libxinerama-dev \
-        libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev libudev-dev libxi-dev \
-        libxrandr-dev yasm
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
 
-    # Step 5: The main build command!
-    # This uses SCons to build the Android editor AAR for the selected architecture.
-    # The -j$(nproc) flag uses all available CPU cores to speed up the build.
-    - name: Build Godot Editor AAR
-      run: |
-        # Set the target architecture based on the workflow input
-        if [ "${{ inputs.architecture }}" == "arm64" ]; then
-          TARGET_ARCH="arm64v8"
-        else
-          TARGET_ARCH="armv7"
-        fi
-        
-        echo "Building for architecture: ${{ inputs.architecture }} (Android arch: $TARGET_ARCH)"
-        scons platform=android target=editor arch=${{ inputs.architecture }} android_arch=$TARGET_ARCH -j$(nproc)
+      - name: Download pre-built Android Swappy Frame Pacing Library
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: godotengine/godot-swappy
+          version: tags/from-source-2025-01-31
+          file: godot-swappy.7z
+          target: swappy/godot-swappy.7z
 
-    # Step 6: Upload the final .aar file as a build artifact
-    # This makes the file available for you to download.
-    - name: Upload AAR Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: godot-editor-aar-${{ inputs.architecture }}
-        path: bin/*.aar
+      - name: Extract pre-built Android Swappy Frame Pacing Library
+        run: 7za x -y swappy/godot-swappy.7z -o${{github.workspace}}/thirdparty/swappy-frame-pacing
+
+      - name: Compilation (C++ part)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 production=yes
+          platform: android
+          target: editor
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: android-editor
+        continue-on-error: true
+
+      - name: Generate Godot editor AAR (Java part)
+        run: |
+          cd platform/android/java
+          ./gradlew generateGodotEditor
+          cd ../../..
+          echo "Listing generated files:"
+          ls -l bin/android_editor_builds/
+
+      - name: Upload Editor AAR Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-editor-aar-${{ inputs.godot_version }}-arm64
+          path: bin/android_editor_builds/*.aar
